@@ -22,6 +22,9 @@
 // GPIO 22 SCL
 // GPIO 21 SDA
 
+#define INVALID_INT 0xFFFFFFFF
+#define EMPTY_INT 0xEFFFFFFF
+
 #define MODE_NOT_SET 0
 #define MODE_ADD_COMPONENT 1
 #define MODE_USE_COMPONENT 2
@@ -46,6 +49,51 @@ class string
       char *mString = nullptr;
       size_t mLen = 0;
 };
+
+void DisplayError(const __FlashStringHelper *msg)
+{
+   lcd.clearDisplay();
+   lcd.setTextSize(3);
+   lcd.setTextColor(WHITE);
+   lcd.setCursor(0, 0);
+   lcd.print(F("ERROR:"));
+   lcd.setCursor(2, 2);
+   lcd.setTextSize(1);
+   lcd.print(msg);
+   lcd.display();
+   Serial.print(F("ERROR:"));
+   Serial.println(msg);
+}
+
+void DisplayMessage(const __FlashStringHelper *msg)
+{
+   lcd.clearDisplay();
+   lcd.setTextSize(3);
+   lcd.setTextColor(WHITE);
+   lcd.setCursor(0, 0);
+   lcd.print(msg);
+   lcd.display();
+   Serial.println(msg);
+}
+
+
+void ListComponents()
+{
+   File comp = SPIFFS.open("/components.csv");
+   if(!comp)
+   {
+      DisplayError(F("No components stored yet"));
+   }
+   else
+   {
+      Serial.println(F("Captured components:"));
+      while(comp.available())
+      {
+         Serial.write(comp.read());
+      }
+   }
+   comp.close();
+}
 
 void WaitForScanReport()
 {
@@ -113,19 +161,35 @@ string PromptForScan(const __FlashStringHelper *msg)
    return(ret);
 }
 
-void DisplayError(const __FlashStringHelper *msg)
+int32_t ReadNumericInput(int32_t in = INVALID_INT)
 {
-   lcd.clearDisplay();
-   lcd.setTextSize(3);
-   lcd.setTextColor(WHITE);
-   lcd.setCursor(0, 0);
-   lcd.print(F("ERROR:"));
-   lcd.setCursor(2, 2);
-   lcd.setTextSize(1);
-   lcd.print(msg);
-   lcd.display();
-   Serial.print(F("ERROR:"));
-   Serial.println(msg);
+   char input[128] = { '\0' };
+   uint8_t i(0);
+   char c('\0');
+   while(1)
+   {
+      c = Serial.read();
+      if(c == '\n' || i >= 127)
+      {
+         break;
+      }
+      else if((c >= '0' && c <= '9') ||
+              (c == '-' && i == 0))
+      {
+         input[i++] = c;
+      }
+   }
+
+   int32_t ret(INVALID_INT);
+   if(i > 0)
+   {
+      ret = atoi(input);
+   }
+   else if(c == '\n')
+   {
+      ret = (in == INVALID_INT ? EMPTY_INT : in);
+   }
+   return(ret);
 }
 
 void AskForBin()
@@ -212,10 +276,32 @@ void AddComponentsToBin()
       string scanned = PromptForScan(F("Scan next component..."));
       if(scanned.mString != nullptr)
       {
-         outputFile.print(scanned.mString);
-         outputFile.print(",");
-         outputFile.println(activeBinName);
-         ++i;
+         DisplayMessage(F("Enter order quantity: "));
+         int32_t oqty = ReadNumericInput();
+         Serial.println(oqty, DEC);
+         //DisplayMessage(F("Enter current quantity: "));
+         Serial.print(F("Enter current quantity ("));
+         Serial.print(oqty, DEC);Serial.print(F("):"));
+         int32_t rqty = ReadNumericInput(oqty);
+         Serial.println(rqty, DEC);
+         if(oqty != INVALID_INT)
+         {
+            if(rqty <= oqty)
+            {
+                outputFile.print(scanned.mString);
+                outputFile.print(F(","));
+                outputFile.print(oqty, DEC);
+                outputFile.print(F(","));
+                outputFile.print(rqty, DEC);
+                outputFile.print(F(","));
+                outputFile.println(activeBinName);
+                ++i;
+            }
+            else
+            {
+               Serial.println(F("Remaining quantity CANNOT be larger than order quantity."));
+            }
+         }
       }
       else
       {
@@ -224,12 +310,13 @@ void AddComponentsToBin()
 
       if(i >= 5)
       {
-         DisplayError(F("Done For Now."));
+         DisplayMessage(F("Done For Now."));
          stateMachineMode = 10;
          break;
       }
    }
    outputFile.close();
+   ListComponents();
 }
 
 void setup() {
@@ -257,20 +344,8 @@ void setup() {
    lcd.print(F("Starting up!"));
    lcd.display();
 
-   File comp = SPIFFS.open("/components.csv");
-   if(!comp)
-   {
-      DisplayError(F("No components stored yet"));
-   }
-   else
-   {
-      Serial.println(F("Captured components:"));
-      while(comp.available())
-      {
-         Serial.write(comp.read());
-      }
-   }
-   comp.close();
+   ListComponents();
+   
    Serial.println(F("Here we go"));
 }
 
@@ -299,4 +374,12 @@ void loop() {
         AddComponentsToBin();
      }
   }
+
+  // TODOs:
+  // Erase/Reset component file
+  // Upload component file
+  // Parse datamatrix here for quantity
+  // Connect OLED
+  // Setup encoder reader to select options
+  // Component use/removal mode
 }
