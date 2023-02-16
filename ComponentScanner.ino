@@ -12,6 +12,7 @@
 #include <Adafruit_SSD1306.h>
 
 #include "Timeout.hpp"
+#include "FlashStrings.h"
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -28,6 +29,7 @@
 #define MODE_NOT_SET 0
 #define MODE_ADD_COMPONENT 1
 #define MODE_USE_COMPONENT 2
+#define MODE_VIEW_SCAN_CODES 3
 
 #define ACTIVE_BIN_NAME_LEN 64
 char activeBinName[ACTIVE_BIN_NAME_LEN] = { '\0' };
@@ -37,6 +39,8 @@ uint8_t stateMachineMode = 0;
 
 #define SCANNED_STRING_LEN 1024
 char scannedString[SCANNED_STRING_LEN] = { '\0' };
+#define USER_INPUT_LEN 1024
+char userInput[USER_INPUT_LEN] = { '\0' };
 
 Adafruit_SSD1306 lcd(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
@@ -48,6 +52,42 @@ class string
    public:
       char *mString = nullptr;
       size_t mLen = 0;
+};
+
+class ReadUSBTask
+{
+   public:
+      uint8_t status = 0;
+      char input[128] = { '\0' };
+      char token[64] = { '\0' };
+
+      // ========================================
+      // These methods are to be used by the
+      // other thread/task.
+      void join()
+      {
+         while(status != 3)
+         {
+            //Serial.println(rut.status);
+            delay(1);
+         }
+      }
+
+      void init()
+      {
+         while(status == 0)
+         {
+            // Wait for task to get going...
+            //Serial.println(F("Waiting for task"));
+            delay(1);
+         }
+      }
+
+      bool running()
+      {
+         return(status == 1);
+      }
+      // ========================================
 };
 
 void DisplayError(const __FlashStringHelper *msg)
@@ -113,13 +153,53 @@ void WaitForScanReport()
    Serial.println(F("Waiting for scan"));
 }
 
-void PromptForScan(char *msg)
+void ReadFromUSBSerialTask(void *params)
 {
-   //lcd.clearDisplay();
-   
+   Serial.print(F("ReadFRomUSBSerialTask running on Core: "));
+   Serial.println(xPortGetCoreID());
+
+   memset(userInput, 0, USER_INPUT_LEN);
+   ReadUSBTask *task((ReadUSBTask *)params);
+
+  uint16_t i(0);
+  task->status = 1;
+  while(task->status == 1)
+  {
+     if(Serial.available() > 0)
+     {
+        char c = Serial.read();
+        if(c == '\n')
+        {
+           // Signal end
+           task->status = 2;
+        }
+        else
+        {
+          task->input[i++] = c;
+        }
+     }
+   }
+
+   if(task->status == 2)
+   {
+      memcpy(userInput, task->input, i);
+      Serial.print(F("user> "));
+      Serial.println(task->input);
+   }
+
+   task->status = 3;
+   delay(100);
+   vTaskDelete(NULL);
 }
 
 string PromptForScan(const __FlashStringHelper *msg)
+{
+   char buf[strlen_P((const char PROGMEM *)msg) + 1] = { '\0' };
+   strncpy_P(buf, (const char PROGMEM *)msg, sizeof(buf));
+   return(PromptForScan(buf));
+}
+
+string PromptForScan(const char *msg)
 {
    lcd.clearDisplay();
    lcd.setTextSize(3);
@@ -127,37 +207,58 @@ string PromptForScan(const __FlashStringHelper *msg)
    lcd.setCursor(0, 0);
    lcd.print(F("Scan Code"));
 
+   TaskHandle_t readUSBSerialTask;
+   ReadUSBTask rut;
+   xTaskCreatePinnedToCore(ReadFromUSBSerialTask, "ReadUSBSerial", 10000, &rut, 0, &readUSBSerialTask, 0);
+
+   rut.init();
+   
    Serial.println(msg);
 
    memset(scannedString, 0, SCANNED_STRING_LEN);
 
-      //waitForScan.Active(true);
-      while(Serial2.available() == 0)
+   //waitForScan.Active(true);
+   uint16_t i(0);
+   char c(0);
+   while(rut.running())
+   {
+      //waitForScan.RunOn(millis());
+      if(Serial2.available() > 0)
       {
-         //waitForScan.RunOn(millis());
-         //waitForScan.Active(false);
-      }
+         c = Serial2.read();
 
-      delay(1000);
-      Serial.print(F("Available: "));
-      Serial.println(Serial2.available());
-      //waitForScan.Active(false);
-      uint16_t i(0);
-      while(Serial2.available())
-      {
-         scannedString[i++] = Serial2.read();
+         if(c == '\r')
+         {
+            // End of scan
+            rut.status = 10;
+            break;
+         }
+         scannedString[i++] = c;
          if(i >= (SCANNED_STRING_LEN - 1))
          {
             Serial.println(F("Exceeded scannedString buffer size"));
             break;
          }
       }
-      string ret;
+   }
+   //waitForScan.Active(false);
+
+   string ret;
+   if(rut.status == 10)
+   {
       ret.mString = scannedString;
       ret.mLen = i;
       Serial.print(F("Scanned: "));
       Serial.println(scannedString);
-      
+   }
+   else
+   {
+      ret.mString = userInput;
+      ret.mLen = strlen(userInput);
+      rut.join();
+   }
+
+   Serial.println("End scan");
    return(ret);
 }
 
@@ -214,6 +315,7 @@ void AskForBin()
 
    memset(activeBinName, 0, ACTIVE_BIN_NAME_LEN);
    string binVal = PromptForScan(F("Scan a bin QR code."));
+   Serial.println("setting bin");
    if(binVal.mString != nullptr)
    {
       lcd.clearDisplay();
@@ -227,7 +329,7 @@ void AskForBin()
       lcd.print(activeBinName);
       Serial.print(F("Active Bin: "));
       Serial.println(activeBinName);
-      stateMachineMode = 1;
+      stateMachineMode = 2;
    }
    else
    {
@@ -236,29 +338,87 @@ void AskForBin()
    }
 }
 
+void MainMenu()
+{
+   stateMachineMode = 0;
+   scanMode = MODE_NOT_SET;
+}
+
 void AskForScanMode()
 {
    lcd.clearDisplay();
    lcd.setTextSize(2);
    lcd.setTextColor(WHITE);
    lcd.setCursor(2, 2);
-   lcd.print(F("Select Scan Mode:"));
+   lcd.print(mode_TITLE_STR);
    lcd.setCursor(4, 2);
-   lcd.print(F("1 ADD Components"));
+   lcd.print(mode_ADD_STR);
    lcd.setCursor(4, 3);
-   lcd.print(F("2 USE Components"));
+   lcd.print(mode_USE_STR);
+   lcd.setCursor(4, 4);
+   lcd.print(mode_VIEW_STR);
    lcd.display();
 
-//   waitForScan.Active(true);
-//   while(Serial2.available())
-//   {
-//      waitForScan.RunOn(millis());
-//      waitForScan.Active(false);
-//   }
+   char c(0);
+   scanMode = MODE_NOT_SET;
+   stateMachineMode = 0;
 
-//   waitForScan.Active(false);
-   stateMachineMode = 2;
-   scanMode = MODE_ADD_COMPONENT;
+   while(1)
+   {
+      uint16_t i(0);
+      memset(userInput, 0, USER_INPUT_LEN);
+      Serial.println();
+      Serial.println(separator_STR);
+      Serial.println(mode_TITLE_STR);
+      Serial.println(mode_ADD_STR);
+      Serial.println(mode_USE_STR);
+      Serial.println(mode_VIEW_STR);
+      Serial.print(user_PROMPT_STR);
+      while(1)
+      {
+         if(Serial.available() > 0)
+         {
+            c = Serial.read();
+            if(c == '\n')
+            {
+               Serial.println(userInput);
+               uint8_t v(atoi(userInput));
+               if(v == 1)
+               {
+                  scanMode = MODE_ADD_COMPONENT;
+               }
+               else if(v == 2)
+               {
+                  scanMode = MODE_USE_COMPONENT;
+               }
+               else if(v == 3)
+               {
+                  scanMode = MODE_VIEW_SCAN_CODES;
+               }
+               break;
+            }
+            else
+            {
+               userInput[i++] = c;
+            }
+         }
+      }
+
+      if(scanMode != MODE_NOT_SET)
+      {
+         stateMachineMode = 1;
+         Serial.print("Mode is: ");
+         scanMode == MODE_ADD_COMPONENT ? Serial.println("ADD") :
+                     scanMode == MODE_USE_COMPONENT ? Serial.println("USE") :
+                     Serial.println("VIEW");
+         break;
+      }
+      else
+      {
+         Serial.println(F("Invalid Selection!"));
+      }
+   }
+   Serial.println(separator_STR);
 }
 
 void AddComponentsToBin()
@@ -273,7 +433,7 @@ void AddComponentsToBin()
    size_t i(0);
    while(1)
    {
-      string scanned = PromptForScan(F("Scan next component..."));
+      string scanned = PromptForScan(scan_NEXT_STR);
       if(scanned.mString != nullptr)
       {
          DisplayMessage(F("Enter order quantity: "));
@@ -319,6 +479,32 @@ void AddComponentsToBin()
    ListComponents();
 }
 
+void UseComponentFromBin()
+{
+}
+
+void DecodeScan()
+{
+   while(1)
+   {
+      Serial.println();
+      Serial.println(separator_STR);
+      string scanned = PromptForScan(scan_NEXT_STR);
+      if(scanned.mString != nullptr)
+      {
+         if(scanned.mString == userInput)
+         {
+            MainMenu();
+            break;
+         }
+         else if(scanned.mString == scannedString)
+         {
+            Serial.println(scanned.mString);
+         }
+      }
+   }
+}
+
 void setup() {
   WiFi.mode(WIFI_MODE_NULL);
   // put your setup code here, to run once:
@@ -360,19 +546,28 @@ void loop() {
   {
      if(stateMachineMode == 0)
      {
-        AskForBin();
-     }
-     else if(stateMachineMode == 1)
-     {
-       AskForScanMode();
+        AskForScanMode();
      }
   }
-  else if(stateMachineMode == 2)
+  else if(scanMode == MODE_ADD_COMPONENT)
   {
-     if(scanMode == MODE_ADD_COMPONENT)
+     if(stateMachineMode == 1)
      {
-        AddComponentsToBin();
+        AskForBin();
      }
+     AddComponentsToBin();
+  }
+  else if(scanMode == MODE_USE_COMPONENT)
+  {
+     if(stateMachineMode == 1)
+     {
+        AskForBin();
+     }
+     UseComponentFromBin();
+  }
+  else if(scanMode == MODE_VIEW_SCAN_CODES)
+  {
+     DecodeScan();
   }
 
   // TODOs:
