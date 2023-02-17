@@ -13,6 +13,8 @@
 
 #include "Timeout.hpp"
 #include "FlashStrings.h"
+#include "ANSI_MH_10_8.h"
+#include "String.h"
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -46,13 +48,6 @@ Adafruit_SSD1306 lcd(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 void WaitForScanReport();
 Timeout waitForScan(0, 5000, WaitForScanReport);
-
-class string
-{
-   public:
-      char *mString = nullptr;
-      size_t mLen = 0;
-};
 
 class ReadUSBTask
 {
@@ -155,8 +150,8 @@ void WaitForScanReport()
 
 void ReadFromUSBSerialTask(void *params)
 {
-   Serial.print(F("ReadFRomUSBSerialTask running on Core: "));
-   Serial.println(xPortGetCoreID());
+   //Serial.print(F("ReadFRomUSBSerialTask running on Core: "));
+   //Serial.println(xPortGetCoreID());
 
    memset(userInput, 0, USER_INPUT_LEN);
    ReadUSBTask *task((ReadUSBTask *)params);
@@ -183,13 +178,19 @@ void ReadFromUSBSerialTask(void *params)
    if(task->status == 2)
    {
       memcpy(userInput, task->input, i);
-      Serial.print(F("user> "));
+      Serial.print(user_PROMPT_STR);
       Serial.println(task->input);
    }
 
    task->status = 3;
-   delay(100);
    vTaskDelete(NULL);
+}
+
+void ParseDataMatrixFields(const char *code)
+{
+   ANSIDM.setBarcode(code);
+   ANSIDM.toHumanReadable(Serial);
+   Serial.println(F("Parse complete."));
 }
 
 string PromptForScan(const __FlashStringHelper *msg)
@@ -227,17 +228,18 @@ string PromptForScan(const char *msg)
       {
          c = Serial2.read();
 
+         //Serial.print(c);
          if(c == '\r')
          {
+            //Serial.println();
             // End of scan
             rut.status = 10;
-            break;
          }
          scannedString[i++] = c;
          if(i >= (SCANNED_STRING_LEN - 1))
          {
             Serial.println(F("Exceeded scannedString buffer size"));
-            break;
+            rut.status = 11;
          }
       }
    }
@@ -251,14 +253,18 @@ string PromptForScan(const char *msg)
       Serial.print(F("Scanned: "));
       Serial.println(scannedString);
    }
+   else if(rut.status == 11)
+   {
+      Serial.println(F("Bad scan"));
+   }
    else
    {
       ret.mString = userInput;
       ret.mLen = strlen(userInput);
-      rut.join();
    }
+   
+   rut.join();
 
-   Serial.println("End scan");
    return(ret);
 }
 
@@ -494,18 +500,27 @@ void DecodeScan()
       {
          if(scanned.mString == userInput)
          {
-            MainMenu();
+            if(strcasecmp("test", scanned.mString) == 0)
+            {
+               ANSIDM.unitTest(Serial);
+            }
+            else
+            {
+               MainMenu();
+            }
             break;
          }
          else if(scanned.mString == scannedString)
          {
-            Serial.println(scanned.mString);
+            ParseDataMatrixFields(scanned.mString);
+            //Serial.println(scanned.mString);
          }
       }
    }
 }
 
-void setup() {
+void setup()
+{
   WiFi.mode(WIFI_MODE_NULL);
   // put your setup code here, to run once:
    Serial.begin(115200);
@@ -535,7 +550,8 @@ void setup() {
    Serial.println(F("Here we go"));
 }
 
-void loop() {
+void loop()
+{
   // put your main code here, to run repeatedly:  
 //  while(Serial2.available())
 //  {
