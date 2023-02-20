@@ -12,4 +12,5 @@ const char user_PROMPT_STR[] PROGMEM = "user> ";
 
 const char scan_NEXT_STR[] PROGMEM = "Scan next component...";
 
+const char missing_SELECT_PARAMETER[] PROGMEM = "Select parameter:";
 #endif

@@ -27,14 +27,16 @@ class ANSI_MH_10_8_DataMatrix
       bool getFreeText03(string &out);
       bool getFreeText10(string &out);
       const char *getRawString();
+
+      void add(const char *type, const string &data);
+
       void toHumanReadable(Print &stream);
       void unitTest(Print &stream);
 
       static constexpr char *BARCODE_TEST_DK_BAG PROGMEM = "[)>\u001E06\u001DPA100012-ND\u001D1P440129-3\u001DK\u001D1K77789699\u001D10K92395800\u001D11K1\u001D4LCN\u001DQ25\u001D11ZPICK\u001D12Z2077919\u001D13Z498235\u001D20Z000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
-   private:
-      // ANSI MH 10.8 identifier codes
       static constexpr char *STREAM_START PROGMEM = "[)>";
 
+      // ANSI MH 10.8 identifier codes
       static constexpr char *STORE_PN PROGMEM = "P";
       static constexpr char *MFG_PN PROGMEM = "1P";
       static constexpr char *CUST_PO PROGMEM = "K";
@@ -50,6 +52,7 @@ class ANSI_MH_10_8_DataMatrix
       static constexpr char *FREE_TEXT_03 PROGMEM = "13Z"; //DIGIKEY Load ID
       static constexpr char *FREE_TEXT_10 PROGMEM = "20Z";
 
+   private:
       // These are values from the ASCII table.
       const char GROUP_SEPARATOR PROGMEM = 29;    // 0x1D
       const char RECORD_SEPARATOR PROGMEM = 30;   // 0x1E

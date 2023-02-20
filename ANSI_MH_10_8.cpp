@@ -204,6 +204,28 @@ bool ANSI_MH_10_8_DataMatrix::ProcessToken(char *token, const char *forToken, ui
    return(found);
 }
 
+void ANSI_MH_10_8_DataMatrix::add(const char *type, const string &data)
+{
+   if(strstr_P(rawString, type) == NULL)
+   {
+      uint16_t max(data.mLen + 3);
+      if((max + rawStringLen) < RAW_BARCODE_MAX_LEN)
+      {
+         char *end((char *)memchr(rawString, END_OF_TRANSMISSION, rawStringLen));
+         if(end != NULL)
+         {
+            *end = RECORD_SEPARATOR;
+            end++;
+            memcpy(end, data.mString, data.mLen);
+            end += data.mLen;
+            *end = END_OF_TRANSMISSION;
+            end++;
+            *end = '\0';
+         }
+      }
+   }
+}
+
 void ANSI_MH_10_8_DataMatrix::toHumanReadable(Print &stream)
 {
    string value;

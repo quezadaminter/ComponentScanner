@@ -33,6 +33,10 @@
 #define MODE_USE_COMPONENT 2
 #define MODE_VIEW_SCAN_CODES 3
 
+char SHRUG[] PROGMEM = "¯\\_(ツ)_/¯";
+char CODE_TYPE_DATA_MATRIX[] PROGMEM = "Data Matrix";
+char CODE_TYPE_128[] PROGMEM = "Code 128";
+
 #define ACTIVE_BIN_NAME_LEN 64
 char activeBinName[ACTIVE_BIN_NAME_LEN] = { '\0' };
 uint8_t scanMode = MODE_NOT_SET;
@@ -188,9 +192,22 @@ void ReadFromUSBSerialTask(void *params)
 
 void ParseDataMatrixFields(const char *code)
 {
-   ANSIDM.setBarcode(code);
-   ANSIDM.toHumanReadable(Serial);
+   const char *header(strstr_P(code, ANSI_MH_10_8_DataMatrix::STREAM_START));
+   if(header != NULL)
+   {
+      ANSIDM.setBarcode(header);
+      ANSIDM.toHumanReadable(Serial);
+   }
    Serial.println(F("Parse complete."));
+}
+
+void ParseCode128(const char *code)
+{
+   const char *start(strstr_P(code, "-"));
+   if(start != NULL)
+   {
+      // Handle barcode parsing.
+   }
 }
 
 string PromptForScan(const __FlashStringHelper *msg)
@@ -427,6 +444,29 @@ void AskForScanMode()
    Serial.println(separator_STR);
 }
 
+void AskForMissingInformation()
+{
+   while(1)
+   {
+      Serial.println();
+      Serial.println(separator_STR);
+      Serial.println(missing_SELECT_PARAMETER);
+      Serial.println("print parameters");
+      int32_t param = ReadNumericInput();
+      if(param == INVALID_INT)
+      {
+         // Go to menu...
+         break;
+      }
+      //else if(param >= pMin && param <= pMax)
+      {
+         // select parameter
+         // ask to scan code
+         // apply change.
+      }
+   }
+}
+
 void AddComponentsToBin()
 {
    File outputFile = SPIFFS.open("/components.csv", FILE_WRITE);
@@ -439,9 +479,14 @@ void AddComponentsToBin()
    size_t i(0);
    while(1)
    {
+      // Scan code.
       string scanned = PromptForScan(scan_NEXT_STR);
       if(scanned.mString != nullptr)
       {
+         // Add missing information?
+         AskForMissingInformation();
+
+         // Check current quantity, set remaining quantity.
          DisplayMessage(F("Enter order quantity: "));
          int32_t oqty = ReadNumericInput();
          Serial.println(oqty, DEC);
@@ -512,8 +557,20 @@ void DecodeScan()
          }
          else if(scanned.mString == scannedString)
          {
-            ParseDataMatrixFields(scanned.mString);
-            //Serial.println(scanned.mString);
+            if(strstr_P(scanned.mString, CODE_TYPE_DATA_MATRIX) != NULL)
+            {
+               ParseDataMatrixFields(scanned.mString);
+            }
+            else if(strstr_P(scanned.mString, CODE_TYPE_128) != NULL)
+            {
+               ParseCode128(scanned.mString);
+            }
+            else
+            {
+               Serial.println(F("Unhandled code!"));
+               Serial.println(SHRUG);
+               //Serial.println(scanned.mString);
+            }
          }
       }
    }
